@@ -49,6 +49,7 @@ struct HashTable {
             for (auto& key : bucket)
                 insert(key);
     }
+
 };
 
 // Statistics
