@@ -4,67 +4,66 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+// The key difference before writing a single line: an extensible hash table
+// rehashes and doubles when it gets too full, instead of chaining overflow
+// buckets forever. That's the entire point of the exercise, comparing the
+// two strategies.
 
 using namespace std;
 using namespace chrono;
 
 // Configuration
-const int NUM_BUCKETS        = 16;
+const int INITIAL_BUCKETS    = 16;
 const int ENTRIES_PER_BUCKET = 4;
-const int N = NUM_BUCKETS * ENTRIES_PER_BUCKET;   // capacity
+const int N = INITIAL_BUCKETS * ENTRIES_PER_BUCKET;  // starting capacity
+const double LOAD_FACTOR     = 0.75;  // rehash when 75% full
 
 // Hash function
-int hash_key(const string& key) {
+int hash_key(const string& key, int num_buckets) {
     int h = 0;
-    for (char c : key)
-        h = h * 31 + c;
-    return abs(h) % NUM_BUCKETS;
+    for (char c : key) h = h * 31 + c;
+    return abs(h) % num_buckets;
 }
 
-// Bucket
-struct Bucket {
-    string   entries[ENTRIES_PER_BUCKET];
-    int      count    = 0;
-    Bucket*  overflow = nullptr;
-};
+// Extensible Hash Table
+struct HashTable {
+    vector<vector<string>> buckets;
+    int total = 0;
 
-// Hash Table
-Bucket table[NUM_BUCKETS];
+    HashTable(int size) : buckets(size) {}
 
-void insert(const string& key) {
-    Bucket* b = &table[hash_key(key)];
+    void insert(const string& key) {
+        // rehash if load factor exceeded
+        if ((double)total / buckets.size() >= LOAD_FACTOR)
+            rehash();
 
-    // walk the chain until there is a free slot
-    while (b->count == ENTRIES_PER_BUCKET) {
-        if (b->overflow == nullptr)
-            b->overflow = new Bucket();
-        b = b->overflow;
+        buckets[hash_key(key, buckets.size())].push_back(key);
+        total++;
     }
 
-    b->entries[b->count++] = key;
-}
-
-// Return the total number of buckets
-int bucket_total(int i) {
-    int total = 0;
-    for (Bucket* b = &table[i]; b != nullptr; b = b->overflow)
-        total += b->count;
-    return total;
-}
+    void rehash() {
+        vector<vector<string>> old = move(buckets);
+        buckets.assign(old.size() * 2, {});
+        total = 0;
+        for (auto& bucket : old)
+            for (auto& key : bucket)
+                insert(key);
+    }
+};
 
 // Statistics
-void print_stats() {
-    vector<int> counts(NUM_BUCKETS);
-    for (int i = 0; i < NUM_BUCKETS; i++)
-        counts[i] = bucket_total(i);
+void print_stats(const HashTable& ht) {
+    vector<int> counts;
+    for (auto& b : ht.buckets) counts.push_back(b.size());
 
     int    mn  = *min_element(counts.begin(), counts.end());
     int    mx  = *max_element(counts.begin(), counts.end());
-    double avg = (double)accumulate(counts.begin(), counts.end(), 0) / NUM_BUCKETS;
+    double avg = (double)accumulate(counts.begin(), counts.end(), 0) / counts.size();
 
     cout << "  Min entries/bucket: " << mn  << "\n";
     cout << "  Avg entries/bucket: " << avg << "\n";
     cout << "  Max entries/bucket: " << mx  << "\n";
+    cout << "  Final bucket count: " << ht.buckets.size() << "\n";
 }
 
 // ASCII time graph
@@ -96,44 +95,36 @@ void print_graph(const vector<double>& times) {
     cout << "  (peak = " << maxT << " us)\n";
 }
 
-// Reset table between experiments
-void reset_table() {
-    for (int i = 0; i < NUM_BUCKETS; i++) {
-        Bucket* ov = table[i].overflow;
-        while (ov) { Bucket* next = ov->overflow; delete ov; ov = next; }
-        table[i].count    = 0;
-        table[i].overflow = nullptr;
-    }
-}
-
 // Run one experiment
 void run(const string& label, int total) {
-    reset_table();
+    HashTable ht(INITIAL_BUCKETS);
     vector<double> times;
     times.reserve(total);
 
     for (int i = 0; i < total; i++) {
         string key = "key" + to_string(i);
         auto t0 = high_resolution_clock::now();
-        insert(key);
+        ht.insert(key);
         auto t1 = high_resolution_clock::now();
         times.push_back(duration<double, micro>(t1 - t0).count());
     }
 
     cout << "\n=== " << label << " (" << total << " inserts) ===\n";
-    print_stats();
-    cout << "Insertion time vs items inserted:\n";
+    print_stats(ht);
+    cout << "\n  Insertion time vs items inserted:\n";
     print_graph(times);
 }
 
 // Main
 int main() {
-    cout << "Hash Table: " << NUM_BUCKETS << " buckets x "
-         << ENTRIES_PER_BUCKET << " entries = N=" << N << "\n";
+    cout << "Extensible Hash Table: starts at " << INITIAL_BUCKETS
+         << " buckets x " << ENTRIES_PER_BUCKET << " = N=" << N
+         << "  (rehash at load=" << LOAD_FACTOR << ")\n";
 
     run("N",    N);
     run("10N",  10 * N);
     run("100N", 100 * N);
     run("1000N", 1000 * N);
     run("100000N", 100000 * N);
+
 }
